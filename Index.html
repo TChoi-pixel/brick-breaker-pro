@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Brick Breaker Pro</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #f8fafc;
+            --accent-color: #f43f5e;
+            --paddle-color: #38bdf8;
+            --ball-color: #fbbf24;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border-radius: 16px;
+            overflow: hidden;
+            background: #1e293b;
+            width: 95vw;
+            max-width: 600px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            touch-action: none;
+        }
+
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            font-size: clamp(12px, 3.5vw, 16px);
+            font-weight: 700;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        #message-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 40px 30px;
+            border-radius: 24px;
+            border: 1px solid rgba(244, 63, 94, 0.5);
+            width: 85%;
+            box-sizing: border-box;
+            backdrop-filter: blur(8px);
+            display: none;
+            z-index: 10;
+        }
+
+        h2 { 
+            margin-top: 0; 
+            color: var(--accent-color); 
+            font-size: 32px; 
+            letter-spacing: -0.025em;
+            margin-bottom: 10px;
+        }
+
+        p {
+            color: #94a3b8;
+            font-size: 16px;
+            line-height: 1.5;
+            margin-bottom: 25px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+            color: white;
+            border: none;
+            padding: 16px 40px;
+            font-size: 18px;
+            font-weight: 700;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 10px 15px -3px rgba(244, 63, 94, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+
+        button:active {
+            transform: scale(0.95);
+            box-shadow: 0 4px 6px -1px rgba(244, 63, 94, 0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div class="ui-overlay">
+            <div id="scoreDisplay">SCORE: 000</div>
+            <div id="livesDisplay">LIVES: 3</div>
+        </div>
+        
+        <div id="message-screen">
+            <h2 id="msg-title">BRICK BREAKER</h2>
+            <p id="msg-text">Move the paddle to bounce the ball and break all the bricks.</p>
+            <button id="start-btn">PLAY NOW</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const messageScreen = document.getElementById('message-screen');
+        const msgTitle = document.getElementById('msg-title');
+        const msgText = document.getElementById('msg-text');
+        const startBtn = document.getElementById('start-btn');
+
+        let ballRadius = 9;
+        let x, y, dx, dy;
+        let paddleHeight = 14;
+        let paddleWidth = 100;
+        let paddleX;
+        let rightPressed = false;
+        let leftPressed = false;
+        
+        let brickRowCount = 5;
+        let brickColumnCount = 6;
+        let brickPadding = 10;
+        let brickOffsetTop = 70;
+        let brickOffsetLeft = 25;
+        let brickWidth, brickHeight = 24;
+        
+        let score = 0;
+        let lives = 3;
+        let bricks = [];
+        let gameState = 'START';
+        let animationId;
+
+        function resize() {
+            const container = document.getElementById('game-container');
+            canvas.width = container.offsetWidth;
+            canvas.height = Math.min(window.innerHeight * 0.7, 500);
+            
+            brickColumnCount = canvas.width > 450 ? 8 : 6;
+            brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickPadding * (brickColumnCount - 1))) / brickColumnCount;
+            
+            if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'WIN') {
+                initBricks();
+                paddleX = (canvas.width - paddleWidth) / 2;
+                renderStaticState();
+            }
+        }
+
+        function initBricks() {
+            bricks = [];
+            for (let c = 0; c < brickColumnCount; c++) {
+                bricks[c] = [];
+                for (let r = 0; r < brickRowCount; r++) {
+                    bricks[c][r] = { x: 0, y: 0, status: 1 };
+                }
+            }
+        }
+
+        function resetBall() {
+            x = canvas.width / 2;
+            y = canvas.height - 50;
+            let speed = canvas.width > 500 ? 4.5 : 3.5;
+            dx = speed * (Math.random() > 0.5 ? 1 : -1);
+            dy = -speed;
+        }
+
+        function renderStaticState() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBricks();
+            drawPaddle();
+        }
+
+        // Input listeners
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Right" || e.key === "ArrowRight") rightPressed = true;
+            else if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = true;
+        });
+
+        document.addEventListener("keyup", (e) => {
+            if (e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
+            else if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
+        });
+
+        canvas.addEventListener("mousemove", (e) => {
+            let rect = canvas.getBoundingClientRect();
+            let relativeX = e.clientX - rect.left;
+            if (relativeX > 0 && relativeX < canvas.width) {
+                paddleX = relativeX - paddleWidth / 2;
+            }
+        });
+
+        canvas.addEventListener("touchmove", (e) => {
+            e.preventDefault();
+            let touch = e.touches[0];
+            let rect = canvas.getBoundingClientRect();
+            let relativeX = touch.clientX - rect.left;
+            if (relativeX > 0 && relativeX < canvas.width) {
+                paddleX = relativeX - paddleWidth / 2;
+            }
+        }, {passive: false});
+
+        function collisionDetection() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    let b = bricks[c][r];
+                    if (b.status === 1) {
+                        if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
+                            dy = -dy;
+                            b.status = 0;
+                            score += 10;
+                            scoreDisplay.innerText = `SCORE: ${score.toString().padStart(3, '0')}`;
+                            if (score === brickRowCount * brickColumnCount * 10) {
+                                gameWin();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+            ctx.fillStyle = "#fbbf24";
+            ctx.fill();
+            // Glow effect
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "rgba(251, 191, 36, 0.6)";
+            ctx.closePath();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.roundRect(paddleX, canvas.height - paddleHeight - 15, paddleWidth, paddleHeight, 8);
+            ctx.fillStyle = "#38bdf8";
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawBricks() {
+            // Modern palette
+            const colors = ["#f43f5e", "#ec4899", "#d946ef", "#8b5cf6", "#6366f1"];
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    if (bricks[c][r].status === 1) {
+                        let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
+                        let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
+                        bricks[c][r].x = brickX;
+                        bricks[c][r].y = brickY;
+                        ctx.beginPath();
+                        ctx.roundRect(brickX, brickY, brickWidth, brickHeight, 5);
+                        ctx.fillStyle = colors[r % colors.length];
+                        ctx.fill();
+                        // Inner bevel effect
+                        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+                        ctx.stroke();
+                        ctx.closePath();
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            if (gameState !== 'PLAYING') return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBricks();
+            drawBall();
+            drawPaddle();
+            collisionDetection();
+
+            // Wall bounce
+            if (x + dx > canvas.width - ballRadius || x + dx < ballRadius) {
+                dx = -dx;
+            }
+            if (y + dy < ballRadius) {
+                dy = -dy;
+            } else if (y + dy > canvas.height - ballRadius - 15) {
+                // Paddle hit
+                if (x > paddleX && x < paddleX + paddleWidth) {
+                    let hitPos = (x - (paddleX + paddleWidth/2)) / (paddleWidth/2);
+                    dx = hitPos * 7;
+                    dy = -dy;
+                } else if (y + dy > canvas.height) {
+                    lives--;
+                    livesDisplay.innerText = `LIVES: ${lives}`;
+                    if (!lives) {
+                        gameOver();
+                    } else {
+                        resetBall();
+                    }
+                }
+            }
+
+            if (rightPressed && paddleX < canvas.width - paddleWidth) paddleX += 8;
+            else if (leftPressed && paddleX > 0) paddleX -= 8;
+
+            x += dx;
+            y += dy;
+            animationId = requestAnimationFrame(draw);
+        }
+
+        function showMessage(title, text, buttonText) {
+            cancelAnimationFrame(animationId);
+            msgTitle.innerText = title;
+            msgText.innerText = text;
+            startBtn.innerText = buttonText;
+            messageScreen.style.display = 'block';
+        }
+
+        function startGame() {
+            score = 0;
+            lives = 3;
+            scoreDisplay.innerText = `SCORE: 000`;
+            livesDisplay.innerText = `LIVES: ${lives}`;
+            initBricks();
+            resetBall();
+            messageScreen.style.display = 'none';
+            gameState = 'PLAYING';
+            draw();
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            showMessage("GAME OVER", `Final Score: ${score}`, "TRY AGAIN");
+        }
+
+        function gameWin() {
+            gameState = 'WIN';
+            showMessage("VICTORY!", `You cleared all bricks with ${lives} lives left!`, "PLAY AGAIN");
+        }
+
+        startBtn.onclick = startGame;
+        window.addEventListener('resize', resize);
+        
+        resize();
+        showMessage("BRICK BREAKER PRO", "Bounce the ball to destroy all bricks and achieve the highest score!", "START MISSION");
+    </script>
+</body>
+</html>
